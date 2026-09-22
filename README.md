@@ -34,6 +34,3 @@ Prezzi di chiusura rettificati giornalieri, 1 gennaio 2018 – 31 dicembre 2024,
 
 R con i pacchetti: `tidyquant`, `tidyverse`, `igraph`, `ggraph`, `tidygraph`, `PerformanceAnalytics`
 
-## Paper completo
-
-[link al PDF, se lo pubblichi altrove]
