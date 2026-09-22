@@ -7,7 +7,7 @@ Analisi a network della struttura dei mercati azionari europei tra il 2018 e il 
 
 ## Di cosa si tratta
 
-Il progetto rappresenta 13 asset europei — 5 indici nazionali (DAX, CAC 40, FTSE MIB, IBEX 35, FTSE 100) e 8 ETF settoriali STOXX Europe 600 (Banks, Energy, Technology, Healthcare, Industrials, Food & Beverage, Utilities, Automobiles) — come nodi di una rete, collegati in base alla correlazione tra i loro rendimenti giornalieri.
+Il progetto rappresenta 13 asset europei, 5 indici nazionali (DAX, CAC 40, FTSE MIB, IBEX 35, FTSE 100) e 8 ETF settoriali STOXX Europe 600 (Banks, Energy, Technology, Healthcare, Industrials, Food & Beverage, Utilities, Automobiles), come nodi di una rete, collegati in base alla correlazione tra i loro rendimenti giornalieri.
 
 Tre le domande di ricerca principali:
 - Quali asset occupano le posizioni più centrali nella rete?
