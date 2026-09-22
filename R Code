@@ -1,0 +1,533 @@
+#STEP 1
+library(tidyquant)
+library(tidyverse)
+
+tickers <- c("^GDAXI", "^FCHI", "FTSEMIB.MI", "^IBEX", "^FTSE",
+             "EXV1.DE", "EXH1.DE", "EXV3.DE", "EXV4.DE",
+             "EXH4.DE", "EXH3.DE", "EXH9.DE", "EXV5.DE")
+
+prices <- tq_get(tickers,
+                 from = "2018-01-01",
+                 to = "2024-12-31",
+                 get = "stock.prices")
+
+prices %>%
+  group_by(symbol) %>%
+  summarise(
+    first_date = min(date),
+    last_date = max(date),
+    n_obs = n()
+  )
+
+#STEP2
+asset_labels <- c(
+  "^GDAXI" = "DAX",
+  "^FCHI" = "CAC 40",
+  "FTSEMIB.MI" = "FTSE MIB",
+  "^IBEX" = "IBEX 35",
+  "^FTSE" = "FTSE 100",
+  "EXV1.DE" = "Banks",
+  "EXH1.DE" = "Energy",
+  "EXV3.DE" = "Technology",
+  "EXV4.DE" = "Healthcare",
+  "EXH4.DE" = "Industrials",
+  "EXH3.DE" = "Food & Beverage",
+  "EXH9.DE" = "Utilities",
+  "EXV5.DE" = "Automobiles"
+)
+
+#STEP3
+returns <- prices %>%
+  group_by(symbol) %>%
+  arrange(date) %>%
+  mutate(log_return = log(adjusted) - log(lag(adjusted))) %>%
+  select(date, symbol, log_return) %>%
+  drop_na()
+
+returns_wide <- returns %>%
+  pivot_wider(names_from = symbol, values_from = log_return) %>%
+  drop_na()
+
+# Rename columns with readable asset names
+colnames(returns_wide)[-1] <- asset_labels[colnames(returns_wide)[-1]]
+
+head(returns_wide)
+dim(returns_wide)
+
+#STEP4
+skewness_fun <- function(x) {
+  mean((x - mean(x, na.rm = TRUE))^3, na.rm = TRUE) / sd(x, na.rm = TRUE)^3
+}
+
+kurtosis_fun <- function(x) {
+  mean((x - mean(x, na.rm = TRUE))^4, na.rm = TRUE) / sd(x, na.rm = TRUE)^4
+}
+
+descriptive_stats <- returns_wide %>%
+  select(-date) %>%
+  summarise(across(
+    everything(),
+    list(
+      mean = ~ mean(.x, na.rm = TRUE),
+      sd = ~ sd(.x, na.rm = TRUE),
+      min = ~ min(.x, na.rm = TRUE),
+      max = ~ max(.x, na.rm = TRUE),
+      skewness = ~ skewness_fun(.x),
+      kurtosis = ~ kurtosis_fun(.x)
+    )
+  )) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = c("asset", ".value"),
+    names_pattern = "(.*)_(mean|sd|min|max|skewness|kurtosis)"
+  )
+
+descriptive_stats
+write.csv(descriptive_stats, "descriptive_stats.csv", row.names = FALSE)
+
+#STEP5
+corr_matrix <- returns_wide %>%
+  select(-date) %>%
+  cor(use = "pairwise.complete.obs")
+
+round(corr_matrix, 2)
+
+#STEP6
+corr_long <- as.data.frame(as.table(corr_matrix))
+colnames(corr_long) <- c("Asset1", "Asset2", "Correlation")
+
+heatmap_plot <- ggplot(corr_long, aes(x = Asset1, y = Asset2, fill = Correlation)) +
+  geom_tile() +
+  geom_text(aes(label = round(Correlation, 2)), size = 3) +
+  scale_fill_gradient2(low = "green", mid = "white", high = "skyblue", midpoint = 0) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title = element_blank()
+  ) +
+  labs(title = "Correlation Matrix of European Equity Assets")
+
+heatmap_plot
+ggsave("correlation_heatmap.png", heatmap_plot, width = 10, height = 8, dpi = 300)
+
+#STEP7
+library(igraph)
+library(ggraph)
+library(tidygraph)
+threshold <- 0.6
+
+adj_matrix <- corr_matrix
+adj_matrix[adj_matrix < threshold] <- 0
+diag(adj_matrix) <- 0
+
+g <- graph_from_adjacency_matrix(
+  adj_matrix,
+  mode = "undirected",
+  weighted = TRUE,
+  diag = FALSE
+)
+
+g
+vcount(g)
+ecount(g)
+edge_density(g)
+
+#STEP8
+centrality_table <- data.frame(
+  asset = V(g)$name,
+  degree = degree(g),
+  strength = strength(g, weights = E(g)$weight),
+  betweenness = betweenness(g, weights = 1 / E(g)$weight),
+  eigenvector = eigen_centrality(g, weights = E(g)$weight)$vector
+) %>%
+  arrange(desc(strength))
+
+centrality_table
+write.csv(centrality_table, "centrality_table.csv", row.names = FALSE)
+
+#STEP9
+network_plot <- ggraph(g, layout = "fr") +
+  geom_edge_link(aes(width = weight), alpha = 0.7) +
+  geom_node_point(size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 4) +
+  theme_void() +
+  labs(title = "Threshold Correlation Network")
+
+network_plot
+ggsave("threshold_network.png", network_plot, width = 10, height = 8, dpi = 300)
+
+#STEP 9.2 PROVIAMO CON TRESHOLD 0.75
+threshold <- 0.75
+
+adj_matrix_75 <- corr_matrix
+adj_matrix_75[adj_matrix_75 < threshold] <- 0
+diag(adj_matrix_75) <- 0
+
+g75 <- igraph::graph_from_adjacency_matrix(
+  adj_matrix_75,
+  mode = "undirected",
+  weighted = TRUE,
+  diag = FALSE
+)
+
+g75
+vcount(g75)
+ecount(g75)
+edge_density(g75)
+network_plot_75 <- ggraph(g75, layout = "fr") +
+  geom_edge_link(aes(width = weight), alpha = 0.6) +
+  geom_node_point(size = 6) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 4) +
+  theme_void() +
+  labs(title = "Threshold Correlation Network, threshold = 0.75")
+
+network_plot_75
+
+ggsave("threshold_network_075.png", network_plot_75, width = 10, height = 8, dpi = 300)
+
+#STEP 9.3
+centrality_table_75 <- data.frame(
+  asset = V(g75)$name,
+  degree = degree(g75),
+  strength = strength(g75, weights = E(g75)$weight),
+  betweenness = betweenness(g75, weights = 1 / E(g75)$weight),
+  eigenvector = eigen_centrality(g75, weights = E(g75)$weight)$vector
+) %>%
+  arrange(desc(strength))
+
+centrality_table_75
+
+write.csv(centrality_table_75, "centrality_table_075.csv", row.names = FALSE)
+
+#STEP 9.4
+communities_75 <- cluster_louvain(g75, weights = E(g75)$weight)
+
+community_table_75 <- data.frame(
+  asset = V(g75)$name,
+  community = membership(communities_75)
+) %>%
+  arrange(community)
+
+community_table_75
+
+write.csv(community_table_75, "community_table_075.csv", row.names = FALSE)
+
+#STEP 9.5 TRESHOLD 0.70
+threshold <- 0.70
+
+adj_matrix_70 <- corr_matrix
+adj_matrix_70[adj_matrix_70 < threshold] <- 0
+diag(adj_matrix_70) <- 0
+
+g70 <- igraph::graph_from_adjacency_matrix(
+  adj_matrix_70,
+  mode = "undirected",
+  weighted = TRUE,
+  diag = FALSE
+)
+
+g70
+vcount(g70)
+ecount(g70)
+edge_density(g70)
+network_plot_70 <- ggraph(g70, layout = "fr") +
+  geom_edge_link(aes(width = weight), alpha = 0.6) +
+  geom_node_point(size = 6) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 4) +
+  theme_void() +
+  labs(title = "Threshold Correlation Network, threshold = 0.70")
+
+network_plot_70
+
+ggsave("threshold_network_070.png", network_plot_70, width = 10, height = 8, dpi = 300)
+
+#STEP 9.6
+centrality_table_70 <- data.frame(
+  asset = V(g70)$name,
+  degree = degree(g70),
+  strength = strength(g70, weights = E(g70)$weight),
+  betweenness = betweenness(g70, weights = 1 / E(g70)$weight),
+  eigenvector = eigen_centrality(g70, weights = E(g70)$weight)$vector
+) %>%
+  arrange(desc(strength))
+
+centrality_table_70
+
+write.csv(centrality_table_70, "centrality_table_070.csv", row.names = FALSE)
+
+#STEP 9.7
+communities_70 <- cluster_louvain(g70, weights = E(g70)$weight)
+
+community_table_70 <- data.frame(
+  asset = V(g70)$name,
+  community = membership(communities_70)
+) %>%
+  arrange(community)
+
+community_table_70
+
+write.csv(community_table_70, "community_table_070.csv", row.names = FALSE)
+
+#STEP 10
+# Minimum Spanning Tree based on Mantegna distance
+
+distance_matrix <- sqrt(2 * (1 - corr_matrix))
+
+dist_graph <- igraph::graph_from_adjacency_matrix(
+  distance_matrix,
+  mode = "undirected",
+  weighted = TRUE,
+  diag = FALSE
+)
+
+mst_graph <- mst(dist_graph, weights = E(dist_graph)$weight)
+
+mst_plot <- ggraph(mst_graph, layout = "fr") +
+  geom_edge_link(aes(width = 1 / weight), alpha = 0.7) +
+  geom_node_point(size = 6) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 4) +
+  theme_void() +
+  labs(title = "Minimum Spanning Tree of European Equity Assets")
+
+mst_plot
+
+ggsave("minimum_spanning_tree.png", mst_plot, width = 10, height = 8, dpi = 300)
+
+#STEP 11
+# Rolling average correlation
+
+window_size <- 252   # approximately one trading year
+step_size <- 21      # approximately one trading month
+
+returns_matrix <- returns_wide %>%
+  select(-date) %>%
+  as.matrix()
+
+dates <- returns_wide$date
+
+rolling_results <- data.frame()
+
+for (start in seq(1, nrow(returns_matrix) - window_size, by = step_size)) {
+  
+  end <- start + window_size - 1
+  
+  window_returns <- returns_matrix[start:end, ]
+  window_corr <- cor(window_returns, use = "pairwise.complete.obs")
+  
+  upper_corr <- window_corr[upper.tri(window_corr)]
+  
+  avg_corr <- mean(upper_corr, na.rm = TRUE)
+  
+  rolling_results <- rbind(
+    rolling_results,
+    data.frame(
+      date = dates[end],
+      average_correlation = avg_corr
+    )
+  )
+}
+
+rolling_corr_plot <- ggplot(rolling_results, aes(x = date, y = average_correlation)) +
+  geom_line(linewidth = 1) +
+  geom_vline(xintercept = as.Date("2020-03-01"), linetype = "dashed") +
+  geom_vline(xintercept = as.Date("2022-02-24"), linetype = "dashed") +
+  theme_minimal() +
+  labs(
+    title = "Rolling Average Correlation",
+    x = "Date",
+    y = "Average pairwise correlation"
+  )
+
+rolling_corr_plot
+
+ggsave("rolling_average_correlation.png", rolling_corr_plot, width = 10, height = 6, dpi = 300)
+
+write.csv(rolling_results, "rolling_average_correlation.csv", row.names = FALSE)
+
+#STEP 12
+# Rolling network density with threshold 0.70
+
+threshold <- 0.70
+
+rolling_density_results <- data.frame()
+
+for (start in seq(1, nrow(returns_matrix) - window_size, by = step_size)) {
+  
+  end <- start + window_size - 1
+  
+  window_returns <- returns_matrix[start:end, ]
+  window_corr <- cor(window_returns, use = "pairwise.complete.obs")
+  
+  adj_window <- window_corr
+  adj_window[adj_window < threshold] <- 0
+  diag(adj_window) <- 0
+  
+  g_window <- igraph::graph_from_adjacency_matrix(
+    adj_window,
+    mode = "undirected",
+    weighted = TRUE,
+    diag = FALSE
+  )
+  
+  rolling_density_results <- rbind(
+    rolling_density_results,
+    data.frame(
+      date = dates[end],
+      edges = ecount(g_window),
+      density = edge_density(g_window)
+    )
+  )
+}
+
+rolling_density_plot <- ggplot(rolling_density_results, aes(x = date, y = density)) +
+  geom_line(linewidth = 1) +
+  geom_vline(xintercept = as.Date("2020-03-01"), linetype = "dashed") +
+  geom_vline(xintercept = as.Date("2022-02-24"), linetype = "dashed") +
+  theme_minimal() +
+  labs(
+    title = "Rolling Network Density, threshold = 0.70",
+    x = "Date",
+    y = "Network density"
+  )
+
+rolling_density_plot
+
+ggsave("rolling_network_density.png", rolling_density_plot, width = 10, height = 6, dpi = 300)
+
+write.csv(rolling_density_results, "rolling_network_density.csv", row.names = FALSE)
+
+#STEP 13
+rolling_edges_plot <- ggplot(rolling_density_results, aes(x = date, y = edges)) +
+  geom_line(linewidth = 1) +
+  geom_vline(xintercept = as.Date("2020-03-01"), linetype = "dashed") +
+  geom_vline(xintercept = as.Date("2022-02-24"), linetype = "dashed") +
+  theme_minimal() +
+  labs(
+    title = "Rolling Number of Network Edges, threshold = 0.70",
+    x = "Date",
+    y = "Number of edges"
+  )
+
+rolling_edges_plot
+
+ggsave("rolling_number_of_edges.png", rolling_edges_plot, width = 10, height = 6, dpi = 300)
+
+#STEP 14
+descriptive_stats_final <- returns_wide %>%
+  select(-date) %>%
+  summarise(across(
+    everything(),
+    list(
+      mean = ~ mean(.x, na.rm = TRUE),
+      sd = ~ sd(.x, na.rm = TRUE),
+      min = ~ min(.x, na.rm = TRUE),
+      max = ~ max(.x, na.rm = TRUE)
+    )
+  )) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = c("asset", ".value"),
+    names_pattern = "(.*)_(mean|sd|min|max)"
+  )
+
+descriptive_stats_final
+
+write.csv(descriptive_stats_final, "descriptive_stats_final.csv", row.names = FALSE)
+
+# TRESHOLD 0.70 CON ALTRO SFONDO
+network_plot_70 <- ggraph(g70, layout = "fr") +
+  geom_edge_link(aes(width = weight), alpha = 0.6, colour = "grey40") +
+  geom_node_point(size = 6, colour = "black") +
+  geom_node_text(aes(label = name), repel = TRUE, size = 4, colour = "black") +
+  theme_void() +
+  theme(
+    plot.background = element_rect(fill = "white", colour = NA),
+    panel.background = element_rect(fill = "white", colour = NA),
+    legend.background = element_rect(fill = "white", colour = NA),
+    plot.title = element_text(colour = "black", size = 16)
+  ) +
+  labs(title = "Threshold Correlation Network, threshold = 0.70")
+
+network_plot_70
+
+ggsave(
+  "threshold_network_070.png",
+  network_plot_70,
+  width = 10,
+  height = 8,
+  dpi = 300,
+  bg = "white"
+)
+
+#TRESHOLD 0.75 CON ALTRO SFONDO
+network_plot_75 <- ggraph(g75, layout = "fr") +
+  geom_edge_link(aes(width = weight), alpha = 0.6, colour = "grey40") +
+  geom_node_point(size = 6, colour = "black") +
+  geom_node_text(aes(label = name), repel = TRUE, size = 4, colour = "black") +
+  theme_void() +
+  theme(
+    plot.background = element_rect(fill = "white", colour = NA),
+    panel.background = element_rect(fill = "white", colour = NA),
+    legend.background = element_rect(fill = "white", colour = NA),
+    plot.title = element_text(colour = "black", size = 16)
+  ) +
+  labs(title = "Threshold Correlation Network, threshold = 0.75")
+
+network_plot_75
+
+ggsave(
+  "threshold_network_075.png",
+  network_plot_75,
+  width = 10,
+  height = 8,
+  dpi = 300,
+  bg = "white"
+)
+
+#MIN SPANN TREE CON ALTRO SFONDO
+mst_plot <- ggraph(mst_graph, layout = "fr") +
+  geom_edge_link(aes(width = 1 / weight), alpha = 0.7, colour = "grey40") +
+  geom_node_point(size = 6, colour = "black") +
+  geom_node_text(aes(label = name), repel = TRUE, size = 4, colour = "black") +
+  theme_void() +
+  theme(
+    plot.background = element_rect(fill = "white", colour = NA),
+    panel.background = element_rect(fill = "white", colour = NA),
+    legend.background = element_rect(fill = "white", colour = NA),
+    plot.title = element_text(colour = "black", size = 16)
+  ) +
+  labs(title = "Minimum Spanning Tree of European Equity Assets")
+
+mst_plot
+
+ggsave(
+  "minimum_spanning_tree.png",
+  mst_plot,
+  width = 10,
+  height = 8,
+  dpi = 300,
+  bg = "white"
+)
+
+#STEP 15
+rolling_combined <- rolling_results %>%
+  left_join(rolling_density_results, by = "date") %>%
+  mutate(
+    regime = case_when(
+      date < as.Date("2020-01-01") ~ "2018-2019",
+      date >= as.Date("2020-01-01") & date < as.Date("2022-01-01") ~ "2020-2021",
+      date >= as.Date("2022-01-01") & date < as.Date("2023-01-01") ~ "2022",
+      date >= as.Date("2023-01-01") ~ "2023-2024"
+    )
+  )
+
+regime_summary <- rolling_combined %>%
+  group_by(regime) %>%
+  summarise(
+    avg_correlation = mean(average_correlation, na.rm = TRUE),
+    avg_density = mean(density, na.rm = TRUE),
+    avg_edges = mean(edges, na.rm = TRUE)
+  )
+
+regime_summary
+write.csv(regime_summary, "regime_summary.csv", row.names = FALSE)
